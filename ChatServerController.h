@@ -47,7 +47,7 @@
     // UI Outlets
     IBOutlet id chatDisconnectButton;
     IBOutlet id chatInputTextField;
-    IBOutlet id chatOutputTextField;
+    IBOutlet NSTextView * chatOutputTextField;
     IBOutlet id chatServerButton;
     IBOutlet id serverWaitBar;
     IBOutlet id waitCancelButton;

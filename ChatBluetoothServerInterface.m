@@ -205,7 +205,8 @@
         // We are successful only if all the data was sent:
         if ( ( numBytesRemaining == 0 ) && ( result == kIOReturnSuccess ) )
 		{
-            NSLog(@"send ok");
+            Byte * byte = (Byte*)buffer;
+            NSLog(@"WRITE ok: %d bytes, command: %d", length, (int)byte[0]);
             return TRUE;
 		}
     }

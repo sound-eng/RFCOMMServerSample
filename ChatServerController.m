@@ -60,6 +60,8 @@
     localDeviceName = [myBluetoothInterface localDeviceName];
     [localDeviceName retain];
 
+    [self performSelector:@selector(chatActionOnServerStart:) withObject:self afterDelay:0.2f];
+    
     return self;
 }
 
@@ -146,7 +148,9 @@
         
         [chatDisconnectButton setEnabled:TRUE];
         [chatInputTextField setEnabled:TRUE];
+        [chatOutputTextField setString:@""];
     }
+    isBinary = NO;
 }
 
 - (IBAction)waitActionCancel:(id)sender
@@ -158,10 +162,14 @@
 // Bluetooth Handlers
 - (void)chatHandleRemoteDisconnection
 {
+    [self logWrite:@"Disconnected\n"];
+    
     [chatDisconnectButton setEnabled:FALSE];
     [chatInputTextField setEnabled:FALSE];
     
     [myBluetoothInterface registerForNewData:nil action:nil];
+    
+    [self performSelector:@selector(chatActionOnServerStart:) withObject:self afterDelay:1.0f];
 }
 
 
@@ -177,6 +185,8 @@
 - (void)chatHandleNewData:(NSData*)dataObject
 {
     [self onReadData:dataObject];
+    Byte bytes[dataObject.length];
+    [dataObject getBytes:bytes];
     NSRange      theRange;
     unsigned int start;
     NSString    *theString;
@@ -185,34 +195,231 @@
     start = [[chatOutputTextField string] length];
     theRange = NSMakeRange(start, 0 );
     
-    theString = [NSMutableString stringWithFormat:@"%@: %@",[myBluetoothInterface remoteDeviceName] , [[[NSString alloc] initWithBytes:[dataObject bytes] length:[dataObject length] encoding:NSUTF8StringEncoding] autorelease]];
-    
+    if(isBinary){
+        theString = [NSString stringWithFormat:@">> read  length: %@ header: %@\n", @(dataObject.length), @(bytes[0])];
+    }
+    else{
+        theString = [NSMutableString stringWithFormat:@"%@: >> %@\n",[myBluetoothInterface remoteDeviceName] , [[[NSString alloc] initWithBytes:[dataObject bytes] length:[dataObject length] encoding:NSUTF8StringEncoding] autorelease]];
+    }
     [chatOutputTextField replaceCharactersInRange:theRange withString:theString];
     theRange = NSMakeRange(start, [theString length] );
     [chatOutputTextField setTextColor:[NSColor redColor] range:theRange];
     
-    //[myBluetoothInterface sendData:(void*)[dataObject bytes] length:[dataObject length]];
+    [chatOutputTextField scrollRangeToVisible:theRange];
+    
 }
 
+- (void) logWrite:(NSString*) string
+{
+    NSRange      theRange;
+    unsigned int start;
+//    NSString    *string;
+    
+    start = [[chatOutputTextField string] length];
+    theRange = NSMakeRange(start, 0 );
+    
+//    theString = [NSMutableString stringWithFormat:@"%@: %@",[myBluetoothInterface remoteDeviceName] , [[[NSString alloc] initWithBytes:[dataObject bytes] length:[dataObject length] encoding:NSUTF8StringEncoding] autorelease]];
+//    
+    [chatOutputTextField replaceCharactersInRange:theRange withString:string];
+    theRange = NSMakeRange(start, [string length] );
+    [chatOutputTextField setTextColor:[NSColor blackColor] range:theRange];
+    
+    [chatOutputTextField scrollRangeToVisible:theRange];
+}
+
+short BYTETOWORD(Byte low, Byte hi)
+{
+    return (((int)(low)&0x00ff)|(((int)(hi)<<8)&0xff00));
+}
+
+int packCount = 0;
+int currentPack = 0;
+int flashStateCounter = 0;
+BOOL isBinary = NO;
+
+Byte * waveData;
+
+void prepareData(int length)
+{
+    if (waveData) free(waveData);
+    waveData = malloc(length);
+    bzero(waveData, length);
+    SInt16 * samples = (SInt16*)waveData;
+    
+    for(int i = 0; i < length/2; i ++)  samples[i] = (SInt16)(20.48 * sinf(2 * M_PI*i * 250 / 20000 )/(i * 0.001f + 1));
+//    for(int i = 0; i < length/2 - length/6; i ++)  samples[i + length/6] +=  (int)(10.24 * sinf(2 * M_PI * i * 250 / 20000 )/(i * 0.001f + 1));
+
+}
+
+- (void) sendData:(void*) data length:(UInt32)length
+{
+    BOOL suc = [myBluetoothInterface sendData:data length:length];
+    if(suc)
+    {
+        Byte * byte = (Byte*)data;
+        [self logWrite:[NSString stringWithFormat:@"<< write length: %@ , header: %@\n", @(length), @((int)byte[0])]];
+    }
+}
 
 - (void) onReadData:(NSData*)data
 {
     NSString * str = [NSString stringWithUTF8String:data.bytes];
-    NSLog(@"READ: %@", data);
-    BOOL suc = NO;
-    NSString * ans = nil;
+    Byte * bytes = (Byte*)[data bytes];
+    NSLog(@"READ: %lu, %d, :  %@  ::  %@", (unsigned long)data.length, (int)bytes[0], data, [NSString stringWithUTF8String:data.bytes]);
+    
     char * chans = NULL;
     if([str isEqualToString:@"XAT+$\r"]) {
         chans = "4556473587\r";
-        suc = [myBluetoothInterface sendData:(void*)chans length:11];
+        [self sendData:(void*)chans length:11];
     }
     else if([str isEqualToString:@"2156473587\r"])
     {
         chans = "OK\r";
-        suc = [myBluetoothInterface sendData:(void*)chans length:3];
+        [self sendData:(void*)chans length:3];
+        isBinary = YES;
     }
-    
-    NSLog(@"WRITE Suc: %d", (int)suc);
+    else if((bytes[0] == 17 || bytes[0] == 18))//sound pack, aru pack requests (17 & 18)
+    {
+        Byte sbytes[3];
+        sbytes[0] = bytes[0];
+        sbytes[1] = 0;
+        sbytes[2] = 3;
+        [self sendData:(void*)sbytes length:3];
+    }
+    else if(bytes[0] == 23)//prepare metering
+    {
+        packCount = BYTETOWORD(bytes[3], bytes[4]);
+        prepareData(packCount*510);
+        
+        currentPack = 0;
+        NSLog(@"PACK COUNT: %d", packCount);
+        
+        Byte sbytes[4];
+        sbytes[0] = 24;//metering prepared reply
+        sbytes[1] = 0;
+        sbytes[2] = 4;
+        sbytes[3] = 1;
+        [self sendData:(void*)sbytes length:4];
+    }
+    else if(bytes[0] == 25)//flash state check
+    {
+        Byte sbytes[4];
+        sbytes[0] = 23;//flash state reply
+        sbytes[1] = 0;
+        sbytes[2] = 4;
+        sbytes[3] = (flashStateCounter>6?1:0);
+        flashStateCounter++;
+        [self sendData:(void*)sbytes length:4];
+    }
+    else if(bytes[0] == 12)//power
+    {
+        int power = 1400;
+        
+        Byte sbytes[10];
+        sbytes[0] = 12;
+        sbytes[1] = 0;
+        sbytes[2] = 10;
+        
+        sbytes[3] = (Byte)(power & 0x00FF);
+        sbytes[4] = (Byte)((power & 0xFF00)>>8);
+        
+        sbytes[9] = 0;
+        [self sendData:(void*)sbytes length:10];
+    }
+    else if(bytes[0] == 21 && data.length == 3)//start meas button pressed
+    {
+        Byte sbytes[3];
+        sbytes[0] = 25;//start probe
+        sbytes[1] = 0;
+        sbytes[2] = 3;
+        [self sendData:(void*)sbytes length:3];
+    }
+    else if(bytes[0] == 9 && data.length == 3)//send next pack request
+    {
+        if(!currentPack)currentPack++;
+        else currentPack+=10;
+        if(currentPack > packCount) {
+            NSLog(@"SENT packs total: %d", currentPack-1);
+            Byte sbytes[3];
+            sbytes[0] = 28;//next pack end
+            sbytes[1] = 0;
+            sbytes[2] = 3;
+            [self sendData:(void*)sbytes length:3];
+
+            return;
+        }
+        NSLog(@"Sending NEXT pack No: %d", currentPack);
+        
+        Byte sbytes[522];
+        sbytes[0] = 9;//next pack reply code
+        sbytes[1] = ((522 & 0xFF00)>>8);
+        sbytes[2] =  (522 & 0x00FF);
+        sbytes[3] = 0;
+        sbytes[4] = 0;
+        sbytes[5] = 0;
+        sbytes[6] = 0;
+        sbytes[7] = 0;
+        sbytes[8] = 0;
+        sbytes[9] = 0;
+        sbytes[11] = (Byte)((currentPack & 0xFF00)>>8);//why other order?
+        sbytes[10] = (Byte)(currentPack & 0x00FF);
+//        for(int i = 12; i < 522; i ++)
+//        {
+//            Byte sample = 128 * random() / (float)0x7fffffff;
+//            if(i>12) sbytes[i] = 0.1f * sample + 0.9f * sbytes[i-1];
+//            else sbytes[i] = sample;
+//        }
+        for(int i = 12; i < 522; i+=2)
+        {
+            int j = currentPack*(i-12);
+            sbytes[i] = waveData[j+1];
+            sbytes[i+1] = waveData[j];
+        }
+        [self sendData:(void*)sbytes length:522];
+        
+    }
+    else if(bytes[0] == 8 && data.length == 5)//send pack (number) request
+    {
+        int packNum = BYTETOWORD(bytes[3], bytes[4]);
+        
+        NSLog(@"Sending EXACT pack No: %d", packNum);
+        
+//        [self log:@"Sending EXACT pack No: %d", packNum];
+        
+        Byte sbytes[522];
+        sbytes[0] = 8;//exact pack reply code
+        sbytes[1] = ((522 & 0xFF00)>>8);
+        sbytes[2] =  (522 & 0x00FF);
+        sbytes[3] = 0;
+        sbytes[4] = 0;
+        sbytes[5] = 0;
+        sbytes[6] = 0;
+        sbytes[7] = 0;
+        sbytes[8] = 0;
+        sbytes[9] = 0;
+        sbytes[11] = (Byte)((packNum & 0xFF00)>>8);//why other order?
+        sbytes[10] = (Byte)(packNum & 0x00FF);
+//        for(int i = 12; i < 522; i ++)
+//        {
+//            Byte sample = 128 * random() / (float)0x7fffffff;
+//            if(i>12) sbytes[i] = 0.1f * sample + 0.9f * sbytes[i-1];
+//            else sbytes[i] = sample;
+//        }
+        for(int i = 12; i < 522; i+=2)
+        {
+            int j = packNum*(i-12);
+            sbytes[i] = waveData[j+1];
+            sbytes[i+1] = waveData[j];
+        }
+        [self sendData:sbytes length:33];
+//        usleep(50000);
+        [self sendData:sbytes+33 length:100];
+        [self sendData:sbytes+133 length:100];
+        [self sendData:sbytes+233 length:100];
+        [self sendData:sbytes+333 length:100];
+        [self sendData:sbytes+433 length:522 - 433];
+    }
+//    NSLog(@"WRITE Suc: %d", (int)suc);
 }
 
 @end
