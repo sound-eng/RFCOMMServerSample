@@ -38,7 +38,7 @@
 	OTHERWISE, EVEN IF APPLE HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
-#import "ChatBluetoothServerInterface.h"Ͻ	z
+#import "ChatBluetoothServerInterface.h"
 #import <IOBluetooth/objc/IOBluetoothDevice.h>
 
 @implementation ChatBluetoothServerInterface

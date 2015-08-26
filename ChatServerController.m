@@ -197,8 +197,7 @@
     
     if(isBinary){
         theString = [NSString stringWithFormat:@">> read  length: %@ header: %@\n", @(dataObject.length), @(bytes[0])];
-    }
-    else{
+    } else {
         theString = [NSMutableString stringWithFormat:@"%@: >> %@\n",[myBluetoothInterface remoteDeviceName] , [[[NSString alloc] initWithBytes:[dataObject bytes] length:[dataObject length] encoding:NSUTF8StringEncoding] autorelease]];
     }
     [chatOutputTextField replaceCharactersInRange:theRange withString:theString];
