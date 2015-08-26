@@ -86,7 +86,7 @@
 - (IBAction)chatActionOnDisconnect:(id)sender
 {
     [myBluetoothInterface disconnectFromClient];
-    [self chatHandleRemoteDisconnection];
+//    [self chatHandleRemoteDisconnection];
 }
 
 - (IBAction)chatActionOnMessageTextField:(id)sender
@@ -178,6 +178,8 @@
     NSLog(@"Got chatHandleRemoteConnection begin\n");
 
     [self connectionFollowUp:TRUE];
+    
+    [self logWrite:@"Connected\n"];
 
     NSLog(@"Got chatHandleRemoteConnection 1\n");
 }
